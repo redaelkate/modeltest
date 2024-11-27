@@ -1,104 +1,69 @@
 import os
-
-from os import path, makedirs, listdir
+os.environ["MKL_NUM_THREADS"] = "1" 
+os.environ["NUMEXPR_NUM_THREADS"] = "1" 
+os.environ["OMP_NUM_THREADS"] = "1"
+from os import path, makedirs
 import sys
 import numpy as np
 np.random.seed(1)
 import random
 random.seed(1)
-
 import torch
+torch.set_num_threads(1)
 from torch import nn
-from torch.backends import cudnn
-
 from torch.autograd import Variable
-
-import pandas as pd
-from tqdm import tqdm
 import timeit
 import cv2
+from zoo.models import Res34_Unet_Loc
 
-from zoo.models import Res34_Unet_Double
+from utils import preprocess_inputs
 
-from utils import *
+import os
+import timeit
+import numpy as np
+import torch
+from torch.autograd import Variable
+import cv2
 
-cv2.setNumThreads(0)
-cv2.ocl.setUseOpenCL(False)
-
-test_dir = 'test/images'
-models_folder = 'weights'
-
-if __name__ == '__main__':
+def process_image_with_models(models, img):
     t0 = timeit.default_timer()
+    # Preprocess the input image
+    img = preprocess_inputs(img)
 
-    seed = int(sys.argv[1])
-    # vis_dev = sys.argv[2]
+    # Prepare input variations for the models
+    inp = []
+    inp.append(img)
+    inp.append(img[::-1, ...])
+    inp.append(img[:, ::-1, ...])
+    inp.append(img[::-1, ::-1, ...])
+    inp = np.asarray(inp, dtype='float')
+    inp = torch.from_numpy(inp.transpose((0, 3, 1, 2))).float()
+    inp = Variable(inp)
 
-    # os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
-    # os.environ["CUDA_VISIBLE_DEVICES"] = vis_dev
+    pred = []
 
-    pred_folder = 'res34cls2_{}_tuned'.format(seed)
-    makedirs(pred_folder, exist_ok=True)
-
-    # cudnn.benchmark = True
-
-    models = []
-
-    snap_to_load = 'res34_cls2_{}_tuned_best'.format(seed)
-    model = Res34_Unet_Double()
-    model = nn.DataParallel(model)
-    print("=> loading checkpoint '{}'".format(snap_to_load))
-    checkpoint = torch.load(path.join(models_folder, snap_to_load), map_location='cpu')
-    loaded_dict = checkpoint['state_dict']
-    sd = model.state_dict()
-    for k in model.state_dict():
-        if k in loaded_dict and sd[k].size() == loaded_dict[k].size():
-            sd[k] = loaded_dict[k]
-    loaded_dict = sd
-    model.load_state_dict(loaded_dict)
-    print("loaded checkpoint '{}' (epoch {}, best_score {})"
-            .format(snap_to_load, checkpoint['epoch'], checkpoint['best_score']))
-    model.eval()
-    models.append(model)
-    
-
+    # Perform prediction with each model
     with torch.no_grad():
-        for f in tqdm(sorted(listdir(test_dir))):
-            if '_pre_' in f:
-                fn = path.join(test_dir, f)
+        for model in models:
+            for j in range(2):
+                msk = model(inp[j * 2:j * 2 + 2])
+                msk = torch.sigmoid(msk)
+                msk = msk.cpu().numpy()
 
-                img = cv2.imread(fn, cv2.IMREAD_COLOR)
-                img2 = cv2.imread(fn.replace('_pre_', '_post_'), cv2.IMREAD_COLOR)
-
-                img = np.concatenate([img, img2], axis=2)
-                img = preprocess_inputs(img)
-
-                inp = []
-                inp.append(img)
-                inp.append(img[::-1, ...])
-                inp.append(img[:, ::-1, ...])
-                inp.append(img[::-1, ::-1, ...])
-                inp = np.asarray(inp, dtype='float')
-                inp = torch.from_numpy(inp.transpose((0, 3, 1, 2))).float()
-                inp = Variable(inp)
-
-                pred = []
-                for model in models:
-                    msk = model(inp)
-                    msk = torch.sigmoid(msk)
-                    msk = msk.cpu().numpy()
-                    
+                if j == 0:
                     pred.append(msk[0, ...])
                     pred.append(msk[1, :, ::-1, :])
-                    pred.append(msk[2, :, :, ::-1])
-                    pred.append(msk[3, :, ::-1, ::-1])
+                else:
+                    pred.append(msk[0, :, :, ::-1])
+                    pred.append(msk[1, :, ::-1, ::-1])
 
-                pred_full = np.asarray(pred).mean(axis=0)
-                
-                msk = pred_full * 255
-                msk = msk.astype('uint8').transpose(1, 2, 0)
-                cv2.imwrite(path.join(pred_folder, '{0}.png'.format(f.replace('.png', '_part1.png'))), msk[..., :3], [cv2.IMWRITE_PNG_COMPRESSION, 9])
-                cv2.imwrite(path.join(pred_folder, '{0}.png'.format(f.replace('.png', '_part2.png'))), msk[..., 2:], [cv2.IMWRITE_PNG_COMPRESSION, 9])
+    # Aggregate predictions
+    pred_full = np.asarray(pred).mean(axis=0)
+    msk = pred_full * 255
+    msk = msk.astype('uint8').transpose(1, 2, 0)
 
     elapsed = timeit.default_timer() - t0
     print('Time: {:.3f} min'.format(elapsed / 60))
+    
+    # Return the processed image (mask) instead of saving it
+    return msk
