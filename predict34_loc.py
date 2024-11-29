@@ -62,8 +62,6 @@ def process_image_with_models(models, img):
     msk = pred_full * 255
     msk = msk.astype('uint8').transpose(1, 2, 0)
 
-    elapsed = timeit.default_timer() - t0
-    print('Time: {:.3f} min'.format(elapsed / 60))
     
     # Return the processed image (mask) instead of saving it
     return msk
