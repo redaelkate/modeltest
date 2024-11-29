@@ -61,4 +61,4 @@ def loc_50(models,img):
         msk = msk.astype('uint8').transpose(1, 2, 0)
         
         # cv2.imwrite(path.join(pred_folder, '{0}.png'.format(f.replace('.png', '_part1.png'))), msk[..., 0], [cv2.IMWRITE_PNG_COMPRESSION, 9])
-        return msk 
+    return msk 
