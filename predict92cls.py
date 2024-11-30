@@ -39,6 +39,7 @@ def cls_92(models,img,img2):
         inp = np.asarray(inp, dtype='float')
         inp = torch.from_numpy(inp.transpose((0, 3, 1, 2))).float()
         inp = Variable(inp)
+        pred = []
         for model in models:
             for j in range(4):
                 msk = model(inp[j:j+1])
